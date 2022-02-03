@@ -379,6 +379,21 @@ func (p *LinodeProvider) ApplyChanges(ctx context.Context, changes *plan.Changes
 			matchedRecordsByTarget := make(map[string]linodego.DomainRecord)
 
 			for _, record := range matchedRecords {
+				if val, ok := matchedRecordsByTarget[record.Target]; ok {
+					log.WithFields(log.Fields{
+						"zoneID":          zoneID,
+						"dnsName":         ep.DNSName,
+						"zoneName":        zone.Domain,
+						"recordType":      ep.RecordType,
+						"duplicateTarget": record.Target,
+						"duplicateVal":    val,
+					}).Warn("Duplicate records found.")
+
+					linodeDeletes = append(linodeDeletes, LinodeChangeDelete{
+						Domain:       zone,
+						DomainRecord: val,
+					})
+				}
 				matchedRecordsByTarget[record.Target] = record
 			}
 
