@@ -547,6 +547,7 @@ func (sc *serviceSource) extractNodePortTargets(svc *v1.Service) (endpoint.Targe
 		nodes           []*v1.Node
 		err             error
 		useLocalAddress bool
+		canUseAll       bool
 	)
 
 	if svc.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
@@ -554,8 +555,16 @@ func (sc *serviceSource) extractNodePortTargets(svc *v1.Service) (endpoint.Targe
 	} else {
 		// Check trafficPolicyAnnotationKey (overrides ExternalTrafficPolicy)
 		controller, ok := svc.Annotations[trafficPolicyAnnotationKey]
-		if ok && controller == "local" {
-			useLocalAddress = true
+		if ok {
+			if controller == "local" {
+				useLocalAddress = true
+				canUseAll = true
+			} else if controller == "localonly" {
+				useLocalAddress = true
+				canUseAll = false
+			} else {
+				useLocalAddress = false
+			}
 		} else {
 			useLocalAddress = false
 		}
@@ -589,7 +598,9 @@ func (sc *serviceSource) extractNodePortTargets(svc *v1.Service) (endpoint.Targe
 				}
 			}
 		}
-	} else {
+	}
+
+	if canUseAll && len(nodes) == 0 {
 		nodes, err = sc.nodeInformer.Lister().List(labels.Everything())
 		if err != nil {
 			return nil, err
