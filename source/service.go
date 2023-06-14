@@ -550,6 +550,7 @@ func (sc *serviceSource) extractNodePortTargets(svc *v1.Service) (endpoint.Targe
 		canUseAll       bool
 	)
 
+	canUseAll = true
 	if svc.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
 		useLocalAddress = true
 	} else {
