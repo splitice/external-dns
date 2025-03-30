@@ -2111,6 +2111,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
 			title:            "access=public annotation NodePort services return an endpoint with public IP addresses of the cluster's nodes",
@@ -2151,6 +2152,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
 			title:            "node port services annotated DNS Controller annotations return an endpoint where all targets has the node role",
@@ -2198,6 +2200,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
 			title:            "node port services annotated with internal DNS Controller annotations return an endpoint in compatibility mode",
@@ -2244,6 +2247,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
 			title:            "node port services annotated with external DNS Controller annotations return an endpoint in compatibility mode",
@@ -2290,6 +2294,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
 			title:            "node port services annotated with both kops dns controller annotations return an empty set of addons",
@@ -2333,6 +2338,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 	} {
 		tc := tc
