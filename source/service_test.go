@@ -2015,6 +2015,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 			podNames:          []string{"pod-0", "pod-1"},
 			nodeIndex:         []int{1, 1},
 			phases:            []v1.PodPhase{v1.PodRunning, v1.PodRunning},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{{}, {}},
 		},
 		{
@@ -2111,6 +2112,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
@@ -2152,6 +2154,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
@@ -2200,6 +2203,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
@@ -2247,6 +2251,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
@@ -2294,6 +2299,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 		{
@@ -2338,6 +2344,7 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
+			conditions:        []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionFalse}},
 			deletionTimestamp: []*metav1.Time{nil, nil, {}},
 		},
 	} {
