@@ -43,14 +43,17 @@ func (m *MockDomainClient) ListDomains(ctx context.Context, opts *linodego.ListO
 	args := m.Called(ctx, opts)
 	return args.Get(0).([]linodego.Domain), args.Error(1)
 }
+
 func (m *MockDomainClient) CreateDomainRecord(ctx context.Context, domainID int, opts linodego.DomainRecordCreateOptions) (*linodego.DomainRecord, error) {
 	args := m.Called(ctx, domainID, opts)
 	return args.Get(0).(*linodego.DomainRecord), args.Error(1)
 }
+
 func (m *MockDomainClient) DeleteDomainRecord(ctx context.Context, domainID int, recordID int) error {
 	args := m.Called(ctx, domainID, recordID)
 	return args.Error(0)
 }
+
 func (m *MockDomainClient) UpdateDomainRecord(ctx context.Context, domainID int, recordID int, opts linodego.DomainRecordUpdateOptions) (*linodego.DomainRecord, error) {
 	args := m.Called(ctx, domainID, recordID, opts)
 	return args.Get(0).(*linodego.DomainRecord), args.Error(1)
@@ -132,17 +135,21 @@ func TestLinodeConvertRecordType(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, linodego.RecordTypeSRV, record)
 
+	record, err = convertRecordType("NS")
+	require.NoError(t, err)
+	assert.Equal(t, linodego.RecordTypeNS, record)
+
 	_, err = convertRecordType("INVALID")
 	require.Error(t, err)
 }
 
 func TestNewLinodeProvider(t *testing.T) {
 	_ = os.Setenv("LINODE_TOKEN", "xxxxxxxxxxxxxxxxx")
-	_, err := NewLinodeProvider(endpoint.NewDomainFilter([]string{"ext-dns-test.zalando.to."}), true, "1.0")
+	_, err := NewLinodeProvider(endpoint.NewDomainFilter([]string{"ext-dns-test.zalando.to."}), true)
 	require.NoError(t, err)
 
 	_ = os.Unsetenv("LINODE_TOKEN")
-	_, err = NewLinodeProvider(endpoint.NewDomainFilter([]string{"ext-dns-test.zalando.to."}), true, "1.0")
+	_, err = NewLinodeProvider(endpoint.NewDomainFilter([]string{"ext-dns-test.zalando.to."}), true)
 	require.Error(t, err)
 }
 
@@ -330,7 +337,7 @@ func TestLinodeApplyChanges(t *testing.T) {
 		11,
 		linodego.DomainRecordUpdateOptions{
 			Type: "A", Name: "", Target: "targetFoo",
-			Priority: getPriority(), Weight: getWeight(), Port: getPort(), TTLSec: 300,
+			Priority: getPriority(), Weight: getWeight(linodego.RecordTypeA), Port: getPort(), TTLSec: 300,
 		},
 	).Return(&linodego.DomainRecord{}, nil).Once()
 
@@ -340,7 +347,7 @@ func TestLinodeApplyChanges(t *testing.T) {
 		2,
 		linodego.DomainRecordCreateOptions{
 			Type: "A", Name: "create", Target: "targetBar",
-			Priority: getPriority(), Weight: getWeight(), Port: getPort(), TTLSec: 0,
+			Priority: getPriority(), Weight: getWeight(linodego.RecordTypeA), Port: getPort(), TTLSec: 0,
 		},
 	).Return(&linodego.DomainRecord{}, nil).Once()
 
@@ -350,7 +357,7 @@ func TestLinodeApplyChanges(t *testing.T) {
 		2,
 		linodego.DomainRecordCreateOptions{
 			Type: "A", Name: "", Target: "targetBar",
-			Priority: getPriority(), Weight: getWeight(), Port: getPort(), TTLSec: 0,
+			Priority: getPriority(), Weight: getWeight(linodego.RecordTypeA), Port: getPort(), TTLSec: 0,
 		},
 	).Return(&linodego.DomainRecord{}, nil).Once()
 
@@ -363,6 +370,11 @@ func TestLinodeApplyChanges(t *testing.T) {
 			DNSName:    "bar.io",
 			RecordType: "A",
 			Targets:    []string{"targetBar"},
+		}, {
+			// This record should be skipped as it already exists
+			DNSName:    "foo.com",
+			RecordType: "TXT",
+			Targets:    []string{"txt"},
 		}},
 		Delete: []*endpoint.Endpoint{{
 			DNSName:    "api.baz.com",
@@ -415,7 +427,7 @@ func TestLinodeApplyChangesTargetAdded(t *testing.T) {
 		11,
 		linodego.DomainRecordUpdateOptions{
 			Type: "A", Name: "", Target: "targetA",
-			Priority: getPriority(), Weight: getWeight(), Port: getPort(),
+			Priority: getPriority(), Weight: getWeight(linodego.RecordTypeA), Port: getPort(),
 		},
 	).Return(&linodego.DomainRecord{}, nil).Once()
 
@@ -425,7 +437,7 @@ func TestLinodeApplyChangesTargetAdded(t *testing.T) {
 		1,
 		linodego.DomainRecordCreateOptions{
 			Type: "A", Name: "", Target: "targetB",
-			Priority: getPriority(), Weight: getWeight(), Port: getPort(),
+			Priority: getPriority(), Weight: getWeight(linodego.RecordTypeA), Port: getPort(),
 		},
 	).Return(&linodego.DomainRecord{}, nil).Once()
 
@@ -474,7 +486,7 @@ func TestLinodeApplyChangesTargetRemoved(t *testing.T) {
 		12,
 		linodego.DomainRecordUpdateOptions{
 			Type: "A", Name: "", Target: "targetB",
-			Priority: getPriority(), Weight: getWeight(), Port: getPort(),
+			Priority: getPriority(), Weight: getWeight(linodego.RecordTypeA), Port: getPort(),
 		},
 	).Return(&linodego.DomainRecord{}, nil).Once()
 

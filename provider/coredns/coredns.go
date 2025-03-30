@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
@@ -37,10 +36,6 @@ import (
 	"sigs.k8s.io/external-dns/plan"
 	"sigs.k8s.io/external-dns/provider"
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 
 const (
 	priority    = 10 // default priority when nothing is set
@@ -113,7 +108,7 @@ func (c etcdClient) GetServices(prefix string) ([]*Service, error) {
 	for _, n := range r.Kvs {
 		svc := new(Service)
 		if err := json.Unmarshal(n.Value, svc); err != nil {
-			return nil, fmt.Errorf("%s: %s", n.Key, err.Error())
+			return nil, fmt.Errorf("%s: %w", n.Key, err)
 		}
 		b := Service{Host: svc.Host, Port: svc.Port, Priority: svc.Priority, Weight: svc.Weight, Text: svc.Text, Key: string(n.Key)}
 		if _, ok := bx[b]; ok {
@@ -167,7 +162,7 @@ func newTLSConfig(certPath, keyPath, caPath, serverName string, insecure bool) (
 	if certPath != "" {
 		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 		if err != nil {
-			return nil, fmt.Errorf("could not load TLS cert: %s", err)
+			return nil, fmt.Errorf("could not load TLS cert: %w", err)
 		}
 		certificates = append(certificates, cert)
 	}
@@ -191,13 +186,13 @@ func loadRoots(caPath string) (*x509.CertPool, error) {
 	}
 
 	roots := x509.NewCertPool()
-	pem, err := ioutil.ReadFile(caPath)
+	pem, err := os.ReadFile(caPath)
 	if err != nil {
-		return nil, fmt.Errorf("error reading %s: %s", caPath, err)
+		return nil, fmt.Errorf("error reading %s: %w", caPath, err)
 	}
 	ok := roots.AppendCertsFromPEM(pem)
 	if !ok {
-		return nil, fmt.Errorf("could not read root certs: %s", err)
+		return nil, fmt.Errorf("could not read root certs: %w", err)
 	}
 	return roots, nil
 }
@@ -210,8 +205,10 @@ func getETCDConfig() (*etcdcv3.Config, error) {
 	}
 	etcdURLs := strings.Split(etcdURLsStr, ",")
 	firstURL := strings.ToLower(etcdURLs[0])
+	etcdUsername := os.Getenv("ETCD_USERNAME")
+	etcdPassword := os.Getenv("ETCD_PASSWORD")
 	if strings.HasPrefix(firstURL, "http://") {
-		return &etcdcv3.Config{Endpoints: etcdURLs}, nil
+		return &etcdcv3.Config{Endpoints: etcdURLs, Username: etcdUsername, Password: etcdPassword}, nil
 	} else if strings.HasPrefix(firstURL, "https://") {
 		caFile := os.Getenv("ETCD_CA_FILE")
 		certFile := os.Getenv("ETCD_CERT_FILE")
@@ -226,13 +223,15 @@ func getETCDConfig() (*etcdcv3.Config, error) {
 		return &etcdcv3.Config{
 			Endpoints: etcdURLs,
 			TLS:       tlsConfig,
+			Username:  etcdUsername,
+			Password:  etcdPassword,
 		}, nil
 	} else {
 		return nil, errors.New("etcd URLs must start with either http:// or https://")
 	}
 }
 
-//newETCDClient is an etcd client constructor
+// newETCDClient is an etcd client constructor
 func newETCDClient() (coreDNSClient, error) {
 	cfg, err := getETCDConfig()
 	if err != nil {

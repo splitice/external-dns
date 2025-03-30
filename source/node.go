@@ -33,15 +33,19 @@ import (
 	"sigs.k8s.io/external-dns/endpoint"
 )
 
+const warningMsg = "The default behavior of exposing internal IPv6 addresses will change in the next minor version. Use --no-expose-internal-ipv6 flag to opt-in to the new behavior."
+
 type nodeSource struct {
-	client           kubernetes.Interface
-	annotationFilter string
-	fqdnTemplate     *template.Template
-	nodeInformer     coreinformers.NodeInformer
+	client             kubernetes.Interface
+	annotationFilter   string
+	fqdnTemplate       *template.Template
+	nodeInformer       coreinformers.NodeInformer
+	labelSelector      labels.Selector
+	exposeInternalIPV6 bool
 }
 
 // NewNodeSource creates a new nodeSource with the given config.
-func NewNodeSource(ctx context.Context, kubeClient kubernetes.Interface, annotationFilter, fqdnTemplate string) (Source, error) {
+func NewNodeSource(ctx context.Context, kubeClient kubernetes.Interface, annotationFilter, fqdnTemplate string, labelSelector labels.Selector, exposeInternalIPv6 bool) (Source, error) {
 	tmpl, err := parseTemplate(fqdnTemplate)
 	if err != nil {
 		return nil, err
@@ -69,16 +73,18 @@ func NewNodeSource(ctx context.Context, kubeClient kubernetes.Interface, annotat
 	}
 
 	return &nodeSource{
-		client:           kubeClient,
-		annotationFilter: annotationFilter,
-		fqdnTemplate:     tmpl,
-		nodeInformer:     nodeInformer,
+		client:             kubeClient,
+		annotationFilter:   annotationFilter,
+		fqdnTemplate:       tmpl,
+		nodeInformer:       nodeInformer,
+		labelSelector:      labelSelector,
+		exposeInternalIPV6: exposeInternalIPv6,
 	}, nil
 }
 
 // Endpoints returns endpoint objects for each service that should be processed.
 func (ns *nodeSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, error) {
-	nodes, err := ns.nodeInformer.Lister().List(labels.Everything())
+	nodes, err := ns.nodeInformer.Lister().List(ns.labelSelector)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +94,7 @@ func (ns *nodeSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, erro
 		return nil, err
 	}
 
-	endpoints := map[string]*endpoint.Endpoint{}
+	endpoints := map[endpoint.EndpointKey]*endpoint.Endpoint{}
 
 	// create endpoints for all nodes
 	for _, node := range nodes {
@@ -100,17 +106,18 @@ func (ns *nodeSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, erro
 			continue
 		}
 
+		if node.Spec.Unschedulable {
+			log.Debugf("Skipping node %s because it is unschedulable", node.Name)
+			continue
+		}
+
 		log.Debugf("creating endpoint for node %s", node.Name)
 
-		ttl, err := getTTLFromAnnotations(node.Annotations)
-		if err != nil {
-			log.Warn(err)
-		}
+		ttl := getTTLFromAnnotations(node.Annotations, fmt.Sprintf("node/%s", node.Name))
 
 		// create new endpoint with the information we already have
 		ep := &endpoint.Endpoint{
-			RecordType: "A", // hardcoded DNS record type
-			RecordTTL:  ttl,
+			RecordTTL: ttl,
 		}
 
 		if ns.fqdnTemplate != nil {
@@ -129,19 +136,27 @@ func (ns *nodeSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, erro
 			log.Debugf("not applying template for %s", node.Name)
 		}
 
-		addrs, err := ns.nodeAddresses(node)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get node address from %s: %s", node.Name, err.Error())
+		addrs := getTargetsFromTargetAnnotation(node.Annotations)
+		if len(addrs) == 0 {
+			addrs, err = ns.nodeAddresses(node)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get node address from %s: %w", node.Name, err)
+			}
 		}
 
-		ep.Targets = endpoint.Targets(addrs)
 		ep.Labels = endpoint.NewLabels()
-
-		log.Debugf("adding endpoint %s", ep)
-		if _, ok := endpoints[ep.DNSName]; ok {
-			endpoints[ep.DNSName].Targets = append(endpoints[ep.DNSName].Targets, ep.Targets...)
-		} else {
-			endpoints[ep.DNSName] = ep
+		for _, addr := range addrs {
+			log.Debugf("adding endpoint %s target %s", ep, addr)
+			key := endpoint.EndpointKey{
+				DNSName:    ep.DNSName,
+				RecordType: suitableType(addr),
+			}
+			if _, ok := endpoints[key]; !ok {
+				epCopy := *ep
+				epCopy.RecordType = key.RecordType
+				endpoints[key] = &epCopy
+			}
+			endpoints[key].Targets = append(endpoints[key].Targets, addr)
 		}
 	}
 
@@ -163,12 +178,22 @@ func (ns *nodeSource) nodeAddresses(node *v1.Node) ([]string, error) {
 		v1.NodeExternalIP: {},
 		v1.NodeInternalIP: {},
 	}
+	var internalIpv6Addresses []string
 
 	for _, addr := range node.Status.Addresses {
+		// IPv6 InternalIP addresses have special handling.
+		// Refer to https://github.com/kubernetes-sigs/external-dns/pull/5192 for more details.
+		if addr.Type == v1.NodeInternalIP && suitableType(addr.Address) == endpoint.RecordTypeAAAA {
+			internalIpv6Addresses = append(internalIpv6Addresses, addr.Address)
+		}
 		addresses[addr.Type] = append(addresses[addr.Type], addr.Address)
 	}
 
 	if len(addresses[v1.NodeExternalIP]) > 0 {
+		if ns.exposeInternalIPV6 {
+			log.Warn(warningMsg)
+			return append(addresses[v1.NodeExternalIP], internalIpv6Addresses...), nil
+		}
 		return addresses[v1.NodeExternalIP], nil
 	}
 

@@ -40,6 +40,9 @@ helm.sh/chart: {{ include "external-dns.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -66,4 +69,36 @@ The image to use
 */}}
 {{- define "external-dns.image" -}}
 {{- printf "%s:%s" .Values.image.repository (default (printf "v%s" .Chart.AppVersion) .Values.image.tag) }}
+{{- end }}
+
+{{/*
+Provider name, Keeps backward compatibility on provider
+*/}}
+{{- define "external-dns.providerName" -}}
+{{- if eq (typeOf .Values.provider) "string" }}
+{{- .Values.provider }}
+{{- else }}
+{{- .Values.provider.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+The image to use for optional webhook sidecar
+*/}}
+{{- define "external-dns.webhookImage" -}}
+{{- with .image }}
+{{- if or (empty .repository) (empty .tag) }}
+{{- fail "ERROR: webhook provider needs an image repository and a tag" }}
+{{- end }}
+{{- printf "%s:%s" .repository .tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+The pod affinity default label Selector
+*/}}
+{{- define "external-dns.labelSelector" -}}
+labelSelector:
+  matchLabels:
+    {{ include "external-dns.selectorLabels" . | nindent 4 }}
 {{- end }}

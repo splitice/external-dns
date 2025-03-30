@@ -3,42 +3,39 @@ linters-settings:
     default-signifies-exhaustive: false
   goimports:
     local-prefixes: sigs.k8s.io/external-dns
-  golint:
-    min-confidence: 0.9
-  maligned:
-    suggest-new: true
   misspell:
     locale: US
+  revive:
+    ignore-generated-header: true
+    rules:
+      - name: confusing-naming
+        disabled: true
 
 linters:
   # please, do not use `enable-all`: it's deprecated and will be removed soon.
   # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
   disable-all: true
   enable:
-    - deadcode
-    - depguard
     - dogsled
     - gofmt
     - goimports
-    - golint
     - goprintffuncname
-    - gosimple
     - govet
     - ineffassign
-    - interfacer
     - misspell
     - rowserrcheck
-    - staticcheck
-    - structcheck
-    - stylecheck
     - typecheck
     - unconvert
-    - unused
-    - varcheck
     - whitespace
+    - revive
+    - unused
+    - gosimple
+    - staticcheck
 
 issues:
   # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-files:
+    - endpoint/zz_generated.deepcopy.go
   exclude-rules:
     - path: _test\.go
       linters:
@@ -47,12 +44,10 @@ issues:
         - dogsled
         - gofmt
         - goimports
-        - golint
         - goprintffuncname
         - gosimple
         - govet
         - ineffassign
-        - interfacer
         - misspell
         - nolintlint
         - rowserrcheck
@@ -64,7 +59,11 @@ issues:
         - unused
         - varcheck
         - whitespace
-
-run:
-  skip-files:
-    - endpoint/zz_generated.deepcopy.go
+    - path: source/ambassador_host.go
+      linters: [ typecheck ]
+    - path: source/contour_httpproxy.go
+      linters: [ typecheck ]
+    - path: source/f5_virtualserver.go
+      linters: [ typecheck ]
+    - path: source/kong_tcpingress.go
+      linters: [ typecheck ]

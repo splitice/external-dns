@@ -1,4 +1,4 @@
-# Setting up ExternalDNS for Exoscale
+# Exoscale
 
 ## Prerequisites
 
@@ -13,7 +13,6 @@ Additionally you will have to provide the Exoscale...:
 
 * API Key
 * API Secret
-* API Endpoint
 * Elastic IP address, to access the workers
 
 ## Deployment
@@ -41,17 +40,21 @@ spec:
       # serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: k8s.gcr.io/external-dns/external-dns:v0.7.6
+        image: registry.k8s.io/external-dns/external-dns:v0.16.1
         args:
         - --source=ingress # or service or both
         - --provider=exoscale
         - --domain-filter={{ my-domain }}
         - --policy=sync # if you want DNS entries to get deleted as well
         - --txt-owner-id={{ owner-id-for-this-external-dns }}
-        - --exoscale-endpoint={{ endpoint }} # usually https://api.exoscale.ch/dns
         - --exoscale-apikey={{ api-key}}
         - --exoscale-apisecret={{ api-secret }}
+        # - --exoscale-apizone={{ api-zone }}
+        # - --exoscale-apienv={{ api-env }}
 ```
+
+Optional arguments `--exoscale-apizone` and `--exoscale-apienv` define [Exoscale API Zone](https://community.exoscale.com/documentation/platform/exoscale-datacenter-zones/)
+(default `ch-gva-2`) and Exoscale API environment (default `api`, can be used to target non-production API server) respectively.
 
 ## RBAC
 
@@ -109,16 +112,20 @@ kind: Ingress
 metadata:
   name: nginx
   annotations:
-    kubernetes.io/ingress.class: nginx
     external-dns.alpha.kubernetes.io/target: {{ Elastic-IP-address }}
 spec:
+  ingressClassName: nginx
   rules:
   - host: via-ingress.example.com
     http:
       paths:
       - backend:
-          serviceName: nginx
-          servicePort: 80
+          service:
+            name: "nginx"
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
 
 ---
 

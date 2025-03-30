@@ -64,59 +64,6 @@ func newValidConfig(t *testing.T) *externaldns.Config {
 	return cfg
 }
 
-func addRequiredFieldsForDyn(cfg *externaldns.Config) {
-	cfg.LogFormat = "json"
-	cfg.Sources = []string{"ingress"}
-	cfg.Provider = "dyn"
-}
-
-func TestValidateBadDynConfig(t *testing.T) {
-	badConfigs := []*externaldns.Config{
-		{},
-		{
-			// only username
-			DynUsername: "test",
-		},
-		{
-			// only customer name
-			DynCustomerName: "test",
-		},
-		{
-			// negative timeout
-			DynUsername:      "test",
-			DynCustomerName:  "test",
-			DynMinTTLSeconds: -1,
-		},
-	}
-
-	for _, cfg := range badConfigs {
-		addRequiredFieldsForDyn(cfg)
-		err := ValidateConfig(cfg)
-		assert.NotNil(t, err, "Configuration %+v should NOT have passed validation", cfg)
-	}
-}
-
-func TestValidateGoodDynConfig(t *testing.T) {
-	goodConfigs := []*externaldns.Config{
-		{
-			DynUsername:      "test",
-			DynCustomerName:  "test",
-			DynMinTTLSeconds: 600,
-		},
-		{
-			DynUsername:      "test",
-			DynCustomerName:  "test",
-			DynMinTTLSeconds: 0,
-		},
-	}
-
-	for _, cfg := range goodConfigs {
-		addRequiredFieldsForDyn(cfg)
-		err := ValidateConfig(cfg)
-		assert.Nil(t, err, "Configuration should be valid, got this error instead", err)
-	}
-}
-
 func TestValidateBadIgnoreHostnameAnnotationsConfig(t *testing.T) {
 	cfg := externaldns.NewConfig()
 	cfg.IgnoreHostnameAnnotation = true
@@ -132,6 +79,7 @@ func TestValidateBadRfc2136Config(t *testing.T) {
 	cfg.Sources = []string{"test-source"}
 	cfg.Provider = "rfc2136"
 	cfg.RFC2136MinTTL = -1
+	cfg.RFC2136CreatePTR = false
 	cfg.RFC2136BatchChangeSize = 50
 
 	err := ValidateConfig(cfg)
@@ -168,7 +116,7 @@ func TestValidateGoodRfc2136Config(t *testing.T) {
 }
 
 func TestValidateBadRfc2136GssTsigConfig(t *testing.T) {
-	var invalidRfc2136GssTsigConfigs = []*externaldns.Config{
+	invalidRfc2136GssTsigConfigs := []*externaldns.Config{
 		{
 			LogFormat:               "json",
 			Sources:                 []string{"test-source"},
@@ -258,7 +206,7 @@ func TestValidateBadRfc2136GssTsigConfig(t *testing.T) {
 }
 
 func TestValidateGoodRfc2136GssTsigConfig(t *testing.T) {
-	var validRfc2136GssTsigConfigs = []*externaldns.Config{
+	validRfc2136GssTsigConfigs := []*externaldns.Config{
 		{
 			LogFormat:               "json",
 			Sources:                 []string{"test-source"},

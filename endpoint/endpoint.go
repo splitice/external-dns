@@ -18,8 +18,12 @@ package endpoint
 
 import (
 	"fmt"
+	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -27,6 +31,8 @@ import (
 const (
 	// RecordTypeA is a RecordType enum value
 	RecordTypeA = "A"
+	// RecordTypeAAAA is a RecordType enum value
+	RecordTypeAAAA = "AAAA"
 	// RecordTypeCNAME is a RecordType enum value
 	RecordTypeCNAME = "CNAME"
 	// RecordTypeTXT is a RecordType enum value
@@ -37,6 +43,10 @@ const (
 	RecordTypeNS = "NS"
 	// RecordTypePTR is a RecordType enum value
 	RecordTypePTR = "PTR"
+	// RecordTypeMX is a RecordType enum value
+	RecordTypeMX = "MX"
+	// RecordTypeNAPTR is a RecordType enum value
+	RecordTypeNAPTR = "NAPTR"
 )
 
 // TTL is a structure defining the TTL of a DNS record
@@ -66,7 +76,17 @@ func (t Targets) Len() int {
 }
 
 func (t Targets) Less(i, j int) bool {
-	return t[i] < t[j]
+	ipi, err := netip.ParseAddr(t[i])
+	if err != nil {
+		return t[i] < t[j]
+	}
+
+	ipj, err := netip.ParseAddr(t[j])
+	if err != nil {
+		return t[i] < t[j]
+	}
+
+	return ipi.String() < ipj.String()
 }
 
 func (t Targets) Swap(i, j int) {
@@ -83,6 +103,27 @@ func (t Targets) Same(o Targets) bool {
 
 	for i, e := range t {
 		if !strings.EqualFold(e, o[i]) {
+			// IPv6 can be shortened, so it should be parsed for equality checking
+			ipA, err := netip.ParseAddr(e)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"targets":           t,
+					"comparisonTargets": o,
+				}).Debugf("Couldn't parse %s as an IP address: %v", e, err)
+			}
+
+			ipB, err := netip.ParseAddr(o[i])
+			if err != nil {
+				log.WithFields(log.Fields{
+					"targets":           t,
+					"comparisonTargets": o,
+				}).Debugf("Couldn't parse %s as an IP address: %v", e, err)
+			}
+
+			// IPv6 Address Shortener == IPv6 Address Expander
+			if ipA.IsValid() && ipB.IsValid() {
+				return ipA.String() == ipB.String()
+			}
 			return false
 		}
 	}
@@ -107,7 +148,40 @@ func (t Targets) IsLess(o Targets) bool {
 
 	for i, e := range t {
 		if e != o[i] {
-			return e < o[i]
+			// Explicitly prefers IP addresses (e.g. A records) over FQDNs (e.g. CNAMEs).
+			// This prevents behavior like `1-2-3-4.example.com` being "less" than `1.2.3.4` when doing lexicographical string comparison.
+			ipA, err := netip.ParseAddr(e)
+			if err != nil {
+				// Ignoring parsing errors is fine due to the empty netip.Addr{} type being an invalid IP,
+				// which is checked by IsValid() below. However, still log them in case a provider is experiencing
+				// non-obvious issues with the records being created.
+				log.WithFields(log.Fields{
+					"targets":           t,
+					"comparisonTargets": o,
+				}).Debugf("Couldn't parse %s as an IP address: %v", e, err)
+			}
+
+			ipB, err := netip.ParseAddr(o[i])
+			if err != nil {
+				log.WithFields(log.Fields{
+					"targets":           t,
+					"comparisonTargets": o,
+				}).Debugf("Couldn't parse %s as an IP address: %v", e, err)
+			}
+
+			// If both targets are valid IP addresses, use the built-in Less() function to do the comparison.
+			// If one is a valid IP and the other is not, prefer the IP address (consider it "less").
+			// If neither is a valid IP, use lexicographical string comparison to determine which string sorts first alphabetically.
+			switch {
+			case ipA.IsValid() && ipB.IsValid():
+				return ipA.Less(ipB)
+			case ipA.IsValid() && !ipB.IsValid():
+				return true
+			case !ipA.IsValid() && ipB.IsValid():
+				return false
+			default:
+				return e < o[i]
+			}
 		}
 	}
 	return false
@@ -122,13 +196,20 @@ type ProviderSpecificProperty struct {
 // ProviderSpecific holds configuration which is specific to individual DNS providers
 type ProviderSpecific []ProviderSpecificProperty
 
+// EndpointKey is the type of a map key for separating endpoints or targets.
+type EndpointKey struct {
+	DNSName       string
+	RecordType    string
+	SetIdentifier string
+}
+
 // Endpoint is a high-level way of a connection between a service and an IP
 type Endpoint struct {
 	// The hostname of the DNS record
 	DNSName string `json:"dnsName,omitempty"`
 	// The targets the DNS record points to
 	Targets Targets `json:"targets,omitempty"`
-	// RecordType type of record, e.g. CNAME, A, SRV, TXT etc
+	// RecordType type of record, e.g. CNAME, A, AAAA, SRV, TXT etc
 	RecordType string `json:"recordType,omitempty"`
 	// Identifier to distinguish multiple records with the same name and type (e.g. Route53 records with routing policies other than 'simple')
 	SetIdentifier string `json:"setIdentifier,omitempty"`
@@ -154,6 +235,13 @@ func NewEndpointWithTTL(dnsName, recordType string, ttl TTL, targets ...string) 
 		cleanTargets[idx] = strings.TrimSuffix(target, ".")
 	}
 
+	for _, label := range strings.Split(dnsName, ".") {
+		if len(label) > 63 {
+			log.Errorf("label %s in %s is longer than 63 characters. Cannot create endpoint", label, dnsName)
+			return nil
+		}
+	}
+
 	return &Endpoint{
 		DNSName:    strings.TrimSuffix(dnsName, "."),
 		Targets:    cleanTargets,
@@ -175,26 +263,77 @@ func (e *Endpoint) WithSetIdentifier(setIdentifier string) *Endpoint {
 // warrant its own field on the Endpoint object itself. It differs from Labels in the fact that it's
 // not persisted in the Registry but only kept in memory during a single record synchronization.
 func (e *Endpoint) WithProviderSpecific(key, value string) *Endpoint {
-	if e.ProviderSpecific == nil {
-		e.ProviderSpecific = ProviderSpecific{}
-	}
-
-	e.ProviderSpecific = append(e.ProviderSpecific, ProviderSpecificProperty{Name: key, Value: value})
+	e.SetProviderSpecificProperty(key, value)
 	return e
 }
 
-// GetProviderSpecificProperty returns a ProviderSpecificProperty if the property exists.
-func (e *Endpoint) GetProviderSpecificProperty(key string) (ProviderSpecificProperty, bool) {
+// GetProviderSpecificProperty returns the value of a ProviderSpecificProperty if the property exists.
+func (e *Endpoint) GetProviderSpecificProperty(key string) (string, bool) {
 	for _, providerSpecific := range e.ProviderSpecific {
 		if providerSpecific.Name == key {
-			return providerSpecific, true
+			return providerSpecific.Value, true
 		}
 	}
-	return ProviderSpecificProperty{}, false
+	return "", false
+}
+
+// SetProviderSpecificProperty sets the value of a ProviderSpecificProperty.
+func (e *Endpoint) SetProviderSpecificProperty(key string, value string) {
+	for i, providerSpecific := range e.ProviderSpecific {
+		if providerSpecific.Name == key {
+			e.ProviderSpecific[i] = ProviderSpecificProperty{
+				Name:  key,
+				Value: value,
+			}
+			return
+		}
+	}
+
+	e.ProviderSpecific = append(e.ProviderSpecific, ProviderSpecificProperty{Name: key, Value: value})
+}
+
+// DeleteProviderSpecificProperty deletes any ProviderSpecificProperty of the specified name.
+func (e *Endpoint) DeleteProviderSpecificProperty(key string) {
+	for i, providerSpecific := range e.ProviderSpecific {
+		if providerSpecific.Name == key {
+			e.ProviderSpecific = append(e.ProviderSpecific[:i], e.ProviderSpecific[i+1:]...)
+			return
+		}
+	}
+}
+
+// Key returns the EndpointKey of the Endpoint.
+func (e *Endpoint) Key() EndpointKey {
+	return EndpointKey{
+		DNSName:       e.DNSName,
+		RecordType:    e.RecordType,
+		SetIdentifier: e.SetIdentifier,
+	}
+}
+
+// IsOwnedBy returns true if the endpoint owner label matches the given ownerID, false otherwise
+func (e *Endpoint) IsOwnedBy(ownerID string) bool {
+	endpointOwner, ok := e.Labels[OwnerLabelKey]
+	return ok && endpointOwner == ownerID
 }
 
 func (e *Endpoint) String() string {
 	return fmt.Sprintf("%s %d IN %s %s %s %s", e.DNSName, e.RecordTTL, e.RecordType, e.SetIdentifier, e.Targets, e.ProviderSpecific)
+}
+
+// Apply filter to slice of endpoints and return new filtered slice that includes
+// only endpoints that match.
+func FilterEndpointsByOwnerID(ownerID string, eps []*Endpoint) []*Endpoint {
+	filtered := []*Endpoint{}
+	for _, ep := range eps {
+		if endpointOwner, ok := ep.Labels[OwnerLabelKey]; !ok || endpointOwner != ownerID {
+			log.Debugf(`Skipping endpoint %v because owner id does not match, found: "%s", required: "%s"`, ep, endpointOwner, ownerID)
+		} else {
+			filtered = append(filtered, ep)
+		}
+	}
+
+	return filtered
 }
 
 // DNSEndpointSpec defines the desired state of DNSEndpoint
@@ -219,6 +358,7 @@ type DNSEndpointStatus struct {
 // +kubebuilder:resource:path=dnsendpoints
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:metadata:annotations="api-approved.kubernetes.io=https://github.com/kubernetes-sigs/external-dns/pull/2007"
 // +versionName=v1alpha1
 
 type DNSEndpoint struct {
@@ -235,4 +375,76 @@ type DNSEndpointList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []DNSEndpoint `json:"items"`
+}
+
+// RemoveDuplicates returns a slice holding the unique endpoints.
+// This function doesn't contemplate the Targets of an Endpoint
+// as part of the primary Key
+func RemoveDuplicates(endpoints []*Endpoint) []*Endpoint {
+	visited := make(map[EndpointKey]struct{})
+	result := []*Endpoint{}
+
+	for _, ep := range endpoints {
+		key := ep.Key()
+
+		if _, found := visited[key]; !found {
+			result = append(result, ep)
+			visited[key] = struct{}{}
+		} else {
+			log.Debugf(`Skipping duplicated endpoint: %v`, ep)
+		}
+	}
+
+	return result
+}
+
+// Check endpoint if is it properly formatted according to RFC standards
+func (e *Endpoint) CheckEndpoint() bool {
+	switch recordType := e.RecordType; recordType {
+	case RecordTypeMX:
+		return e.Targets.ValidateMXRecord()
+	case RecordTypeSRV:
+		return e.Targets.ValidateSRVRecord()
+	}
+	return true
+}
+
+func (t Targets) ValidateMXRecord() bool {
+	for _, target := range t {
+		// MX records must have a preference value to indicate priority, e.g. "10 example.com"
+		// as per https://www.rfc-editor.org/rfc/rfc974.txt
+		targetParts := strings.Fields(strings.TrimSpace(target))
+		if len(targetParts) != 2 {
+			log.Debugf("Invalid MX record target: %s. MX records must have a preference value to indicate priority, e.g. '10 example.com'", target)
+			return false
+		}
+		preferenceRaw := targetParts[0]
+		_, err := strconv.ParseUint(preferenceRaw, 10, 16)
+		if err != nil {
+			log.Debugf("Invalid SRV record target: %s. Invalid integer value in target.", target)
+			return false
+		}
+	}
+	return true
+}
+
+func (t Targets) ValidateSRVRecord() bool {
+	for _, target := range t {
+		// SRV records must have a priority, weight, and port value, e.g. "10 5 5060 example.com"
+		// as per https://www.rfc-editor.org/rfc/rfc2782.txt
+		targetParts := strings.Fields(strings.TrimSpace(target))
+		if len(targetParts) != 4 {
+			log.Debugf("Invalid SRV record target: %s. SRV records must have a priority, weight, and port value, e.g. '10 5 5060 example.com'", target)
+			return false
+		}
+
+		for _, part := range targetParts[:3] {
+			_, err := strconv.ParseUint(part, 10, 16)
+			if err != nil {
+				log.Debugf("Invalid SRV record target: %s. Invalid integer value in target.", target)
+				return false
+			}
+		}
+	}
+	return true
 }
