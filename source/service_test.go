@@ -2012,9 +2012,10 @@ func TestServiceSourceNodePortServices(t *testing.T) {
 					},
 				},
 			}},
-			podNames:  []string{"pod-0", "pod-1"},
-			nodeIndex: []int{1, 1},
-			phases:    []v1.PodPhase{v1.PodRunning, v1.PodRunning},
+			podNames:          []string{"pod-0", "pod-1"},
+			nodeIndex:         []int{1, 1},
+			phases:            []v1.PodPhase{v1.PodRunning, v1.PodRunning},
+			deletionTimestamp: []*metav1.Time{{}, {}},
 		},
 		{
 			title:            "access=private annotation NodePort services return an endpoint with private IP addresses of the cluster's nodes",
